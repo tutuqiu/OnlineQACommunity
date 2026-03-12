@@ -28,6 +28,11 @@ func RequireAuth(authSvc *auth.Service, cfg config.Config) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if claims.TokenType != auth.TokenTypeAccess {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token type"})
+			c.Abort()
+			return
+		}
 
 		revoked, err := authSvc.IsTokenRevoked(c.Request.Context(), claims.ID)
 		if err != nil {

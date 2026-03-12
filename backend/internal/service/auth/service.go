@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,13 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
+const (
+	TokenTypeAccess  = "Bearer"
+	TokenTypeRefresh = "Refresh"
+)
+
 type CustomClaims struct {
+	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -63,19 +70,7 @@ RETURNING id, email, username;
 }
 
 func (s *Service) Login(ctx context.Context, req model.LoginRequest) (model.User, model.AuthToken, error) {
-	var (
-		userID       int64
-		email        string
-		username     string
-		passwordHash string
-	)
-
-	q := `
-SELECT id, email, username, password_hash
-FROM users
-WHERE email = $1;
-`
-	err := s.db.QueryRowContext(ctx, q, strings.ToLower(req.Email)).Scan(&userID, &email, &username, &passwordHash)
+	user, passwordHash, err := s.getUserByEmail(ctx, strings.ToLower(req.Email))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.User{}, model.AuthToken{}, ErrInvalidCredentials
@@ -87,36 +82,52 @@ WHERE email = $1;
 		return model.User{}, model.AuthToken{}, ErrInvalidCredentials
 	}
 
-	now := time.Now()
-	exp := now.Add(time.Duration(s.cfg.JWTAccessTTLMinutes) * time.Minute)
-
-	claims := &CustomClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   fmt.Sprintf("%d", userID),
-			Issuer:    s.cfg.JWTIssuer,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(exp),
-			ID:        newTokenID(),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	accessToken, err := token.SignedString([]byte(s.cfg.JWTSecret))
+	tokenModel, err := s.issueTokenPair(user.ID)
 	if err != nil {
-		return model.User{}, model.AuthToken{}, fmt.Errorf("sign token: %w", err)
+		return model.User{}, model.AuthToken{}, fmt.Errorf("issue token pair: %w", err)
 	}
 
-	user := model.User{
-		ID:       userID,
-		Email:    email,
-		Username: username,
-	}
-	tokenModel := model.AuthToken{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(time.Until(exp).Seconds()),
-	}
 	return user, tokenModel, nil
+}
+
+func (s *Service) RefreshToken(ctx context.Context, rawRefreshToken string) (model.AuthToken, error) {
+	claims, err := ParseAndValidateToken(rawRefreshToken, s.cfg)
+	if err != nil {
+		return model.AuthToken{}, ErrInvalidCredentials
+	}
+	if claims.TokenType != TokenTypeRefresh {
+		return model.AuthToken{}, ErrInvalidCredentials
+	}
+
+	revoked, err := s.IsTokenRevoked(ctx, claims.ID)
+	if err != nil {
+		return model.AuthToken{}, fmt.Errorf("check refresh token revoked: %w", err)
+	}
+	if revoked {
+		return model.AuthToken{}, ErrInvalidCredentials
+	}
+
+	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil {
+		return model.AuthToken{}, ErrInvalidCredentials
+	}
+
+	if _, _, err := s.getUserByID(ctx, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.AuthToken{}, ErrInvalidCredentials
+		}
+		return model.AuthToken{}, fmt.Errorf("query user: %w", err)
+	}
+
+	if err := s.RevokeToken(ctx, claims); err != nil {
+		return model.AuthToken{}, fmt.Errorf("revoke old refresh token: %w", err)
+	}
+
+	tokenModel, err := s.issueTokenPair(userID)
+	if err != nil {
+		return model.AuthToken{}, fmt.Errorf("issue token pair: %w", err)
+	}
+	return tokenModel, nil
 }
 
 func (s *Service) RevokeToken(ctx context.Context, claims *CustomClaims) error {
@@ -177,6 +188,85 @@ func ParseAndValidateToken(tokenString string, cfg config.Config) (*CustomClaims
 		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+func (s *Service) getUserByEmail(ctx context.Context, email string) (model.User, string, error) {
+	var (
+		user         model.User
+		passwordHash string
+	)
+
+	q := `
+SELECT id, email, username, password_hash
+FROM users
+WHERE email = $1;
+`
+	err := s.db.QueryRowContext(ctx, q, email).Scan(&user.ID, &user.Email, &user.Username, &passwordHash)
+	if err != nil {
+		return model.User{}, "", err
+	}
+	return user, passwordHash, nil
+}
+
+func (s *Service) getUserByID(ctx context.Context, userID int64) (model.User, string, error) {
+	var (
+		user         model.User
+		passwordHash string
+	)
+
+	q := `
+SELECT id, email, username, password_hash
+FROM users
+WHERE id = $1;
+`
+	err := s.db.QueryRowContext(ctx, q, userID).Scan(&user.ID, &user.Email, &user.Username, &passwordHash)
+	if err != nil {
+		return model.User{}, "", err
+	}
+	return user, passwordHash, nil
+}
+
+func (s *Service) issueTokenPair(userID int64) (model.AuthToken, error) {
+	now := time.Now()
+	accessExp := now.Add(time.Duration(s.cfg.JWTAccessTTLMinutes) * time.Minute)
+	refreshExp := now.Add(time.Duration(s.cfg.JWTRefreshTTLHours) * time.Hour)
+
+	accessToken, err := s.signToken(userID, TokenTypeAccess, now, accessExp)
+	if err != nil {
+		return model.AuthToken{}, fmt.Errorf("sign access token: %w", err)
+	}
+	refreshToken, err := s.signToken(userID, TokenTypeRefresh, now, refreshExp)
+	if err != nil {
+		return model.AuthToken{}, fmt.Errorf("sign refresh token: %w", err)
+	}
+
+	return model.AuthToken{
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		TokenType:        TokenTypeAccess,
+		ExpiresIn:        int64(time.Until(accessExp).Seconds()),
+		RefreshExpiresIn: int64(time.Until(refreshExp).Seconds()),
+	}, nil
+}
+
+func (s *Service) signToken(userID int64, tokenType string, now, exp time.Time) (string, error) {
+	claims := &CustomClaims{
+		TokenType: tokenType,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", userID),
+			Issuer:    s.cfg.JWTIssuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(exp),
+			ID:        newTokenID(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(s.cfg.JWTSecret))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }
 
 func newTokenID() string {

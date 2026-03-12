@@ -21,6 +21,7 @@ type Config struct {
 	JWTSecret           string
 	JWTIssuer           string
 	JWTAccessTTLMinutes int
+	JWTRefreshTTLHours  int
 }
 
 func FromEnv() Config {
@@ -37,6 +38,7 @@ func FromEnv() Config {
 		JWTSecret:           mustEnv("JWT_SECRET"),
 		JWTIssuer:           getEnv("JWT_ISSUER", "onlineqa-backend"),
 		JWTAccessTTLMinutes: getEnvInt("JWT_ACCESS_TTL_MINUTES", 120),
+		JWTRefreshTTLHours:  getEnvInt("JWT_REFRESH_TTL_HOURS", 720),
 	}
 }
 

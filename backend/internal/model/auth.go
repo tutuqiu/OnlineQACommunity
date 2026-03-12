@@ -11,6 +11,10 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=8,max=72"`
 }
 
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
 type User struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email"`
@@ -18,9 +22,11 @@ type User struct {
 }
 
 type AuthToken struct {
-	AccessToken string
-	TokenType   string
-	ExpiresIn   int64
+	AccessToken      string
+	RefreshToken     string
+	TokenType        string
+	ExpiresIn        int64
+	RefreshExpiresIn int64
 }
 
 type RegisterResponse struct {
@@ -28,8 +34,18 @@ type RegisterResponse struct {
 }
 
 type LoginResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
-	User        User   `json:"user"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	TokenType        string `json:"token_type"`
+	ExpiresIn        int64  `json:"expires_in"`
+	RefreshExpiresIn int64  `json:"refresh_expires_in"`
+	User             User   `json:"user"`
+}
+
+type RefreshTokenResponse struct {
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	TokenType        string `json:"token_type"`
+	ExpiresIn        int64  `json:"expires_in"`
+	RefreshExpiresIn int64  `json:"refresh_expires_in"`
 }

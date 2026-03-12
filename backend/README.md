@@ -42,4 +42,5 @@ curl http://127.0.0.1:18765/healthz
 
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout` (Bearer token)
