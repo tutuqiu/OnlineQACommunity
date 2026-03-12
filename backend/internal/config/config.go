@@ -6,6 +6,7 @@ import (
 	"strconv"
 )
 
+// Config 聚合应用启动所需的环境变量配置。
 type Config struct {
 	AppName string
 	AppEnv  string
@@ -24,6 +25,9 @@ type Config struct {
 	JWTRefreshTTLHours  int
 }
 
+/**
+ * FromEnv 从环境变量读取配置，并在缺省时回退到约定默认值。
+ */
 func FromEnv() Config {
 	return Config{
 		AppName:             getEnv("APP_NAME", "onlineqa-backend"),
@@ -42,10 +46,16 @@ func FromEnv() Config {
 	}
 }
 
+/**
+ * ListenAddr 返回 HTTP 服务监听地址。
+ */
 func (c Config) ListenAddr() string {
 	return fmt.Sprintf("%s:%s", c.AppHost, c.AppPort)
 }
 
+/**
+ * getEnv 读取可选环境变量，缺失时返回默认值。
+ */
 func getEnv(key, fallback string) string {
 	v := os.Getenv(key)
 	if v == "" {
@@ -54,6 +64,9 @@ func getEnv(key, fallback string) string {
 	return v
 }
 
+/**
+ * mustEnv 读取必填环境变量，缺失时直接中断启动。
+ */
 func mustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
@@ -62,6 +75,9 @@ func mustEnv(key string) string {
 	return v
 }
 
+/**
+ * getEnvInt 读取整型环境变量，解析失败时回退到默认值。
+ */
 func getEnvInt(key string, fallback int) int {
 	v := os.Getenv(key)
 	if v == "" {

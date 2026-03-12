@@ -12,6 +12,9 @@ import (
 	"onlineqacommunity/backend/internal/httpapi"
 )
 
+/**
+ * main 负责加载配置、初始化数据库连接并启动 HTTP 服务。
+ */
 func main() {
 	cfg := config.FromEnv()
 

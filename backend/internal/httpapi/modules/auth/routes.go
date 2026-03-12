@@ -15,12 +15,17 @@ import (
 	authsvc "onlineqacommunity/backend/internal/service/auth"
 )
 
+// requestTimeout 约束单个认证接口处理的最长执行时间。
 const requestTimeout = 3 * time.Second
 
+// authHandler 封装认证模块的 HTTP 处理逻辑。
 type authHandler struct {
 	svc *authsvc.Service
 }
 
+/**
+ * RegisterRoutes 注册认证相关路由，并为受保护接口挂载鉴权中间件。
+ */
 func RegisterRoutes(r *gin.Engine, db *sql.DB, cfg config.Config) {
 	svc := authsvc.New(db, cfg)
 	h := &authHandler{svc: svc}
@@ -35,6 +40,9 @@ func RegisterRoutes(r *gin.Engine, db *sql.DB, cfg config.Config) {
 	protected.POST("/logout", h.logout)
 }
 
+/**
+ * register 处理用户注册请求并返回新建用户基础信息。
+ */
 func (h *authHandler) register(c *gin.Context) {
 	var req model.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,6 +59,10 @@ func (h *authHandler) register(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "email or username already exists"})
 			return
 		}
+		if errors.Is(err, authsvc.ErrWeakPassword) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters and include at least 2 of: uppercase, lowercase, number, special character"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -59,6 +71,9 @@ func (h *authHandler) register(c *gin.Context) {
 	c.JSON(http.StatusCreated, resp)
 }
 
+/**
+ * login 校验邮箱密码并签发新的访问令牌和刷新令牌。
+ */
 func (h *authHandler) login(c *gin.Context) {
 	var req model.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -90,6 +105,9 @@ func (h *authHandler) login(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+/**
+ * refresh 校验刷新令牌并签发新的一组令牌。
+ */
 func (h *authHandler) refresh(c *gin.Context) {
 	var req model.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -120,6 +138,9 @@ func (h *authHandler) refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+/**
+ * logout 撤销当前访问令牌，阻止同一令牌继续访问受保护接口。
+ */
 func (h *authHandler) logout(c *gin.Context) {
 	rawClaims, exists := c.Get(middleware.ClaimsContextKey)
 	if !exists {

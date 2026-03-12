@@ -12,6 +12,9 @@ import (
 	authmodule "onlineqacommunity/backend/internal/httpapi/modules/auth"
 )
 
+/**
+ * NewRouter 创建并注册 HTTP 路由，包括认证模块与健康检查接口。
+ */
 func NewRouter(db *sql.DB, cfg config.Config) *gin.Engine {
 	r := gin.Default()
 

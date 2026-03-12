@@ -7,6 +7,8 @@
 *.out
 *.test
 *.prof
+*.cache
+
 bin/
 vendor/
 go.sum
@@ -21,3 +23,7 @@ go.sum
 # Local runtime/config
 .env
 .run/
+
+# AI prompts
+.ai-workspace
+

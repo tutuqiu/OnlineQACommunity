@@ -10,8 +10,12 @@ import (
 	"onlineqacommunity/backend/internal/service/auth"
 )
 
+// ClaimsContextKey 是请求上下文中保存鉴权声明的键名。
 const ClaimsContextKey = "auth_claims"
 
+/**
+ * RequireAuth 校验访问令牌有效性，并拒绝已撤销的令牌继续访问受保护接口。
+ */
 func RequireAuth(authSvc *auth.Service, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")

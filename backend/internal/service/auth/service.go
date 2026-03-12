@@ -20,30 +20,48 @@ import (
 )
 
 var (
-	ErrUserExists         = errors.New("user already exists")
+	// ErrUserExists 表示邮箱或用户名已存在。
+	ErrUserExists = errors.New("user already exists")
+	// ErrInvalidCredentials 表示认证凭证校验失败。
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrWeakPassword 表示注册密码未满足强密码规则。
+	ErrWeakPassword = errors.New("weak password")
 )
 
 const (
-	TokenTypeAccess  = "Bearer"
+	// TokenTypeAccess 表示访问令牌类型。
+	TokenTypeAccess = "Bearer"
+	// TokenTypeRefresh 表示刷新令牌类型。
 	TokenTypeRefresh = "Refresh"
 )
 
+// CustomClaims 定义 JWT 中扩展的令牌类型声明。
 type CustomClaims struct {
 	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
+// Service 封装认证相关的数据库访问与令牌逻辑。
 type Service struct {
 	db  *sql.DB
 	cfg config.Config
 }
 
+/**
+ * New 创建认证服务实例。
+ */
 func New(db *sql.DB, cfg config.Config) *Service {
 	return &Service{db: db, cfg: cfg}
 }
 
+/**
+ * Register 创建新用户并返回基础用户信息。
+ */
 func (s *Service) Register(ctx context.Context, req model.RegisterRequest) (model.User, error) {
+	if !isStrongPassword(req.Password) {
+		return model.User{}, ErrWeakPassword
+	}
+
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return model.User{}, fmt.Errorf("hash password: %w", err)
@@ -69,6 +87,9 @@ RETURNING id, email, username;
 	return user, nil
 }
 
+/**
+ * Login 校验用户凭证并签发新的令牌对。
+ */
 func (s *Service) Login(ctx context.Context, req model.LoginRequest) (model.User, model.AuthToken, error) {
 	user, passwordHash, err := s.getUserByEmail(ctx, strings.ToLower(req.Email))
 	if err != nil {
@@ -90,6 +111,9 @@ func (s *Service) Login(ctx context.Context, req model.LoginRequest) (model.User
 	return user, tokenModel, nil
 }
 
+/**
+ * RefreshToken 校验刷新令牌、撤销旧令牌并签发新令牌对。
+ */
 func (s *Service) RefreshToken(ctx context.Context, rawRefreshToken string) (model.AuthToken, error) {
 	claims, err := ParseAndValidateToken(rawRefreshToken, s.cfg)
 	if err != nil {
@@ -130,6 +154,9 @@ func (s *Service) RefreshToken(ctx context.Context, rawRefreshToken string) (mod
 	return tokenModel, nil
 }
 
+/**
+ * RevokeToken 将指定令牌加入撤销表，后续请求将无法继续使用。
+ */
 func (s *Service) RevokeToken(ctx context.Context, claims *CustomClaims) error {
 	if claims == nil || claims.ExpiresAt == nil || claims.ID == "" {
 		return nil
@@ -147,6 +174,9 @@ ON CONFLICT (jti) DO NOTHING;
 	return nil
 }
 
+/**
+ * IsTokenRevoked 检查令牌是否已在撤销表中且仍处于有效期内。
+ */
 func (s *Service) IsTokenRevoked(ctx context.Context, jti string) (bool, error) {
 	if jti == "" {
 		return false, nil
@@ -165,6 +195,9 @@ SELECT EXISTS (
 	return exists, nil
 }
 
+/**
+ * ParseAndValidateToken 解析 JWT 并校验签名算法、签发方与过期时间。
+ */
 func ParseAndValidateToken(tokenString string, cfg config.Config) (*CustomClaims, error) {
 	token, err := jwt.ParseWithClaims(
 		tokenString,
@@ -190,6 +223,9 @@ func ParseAndValidateToken(tokenString string, cfg config.Config) (*CustomClaims
 	return claims, nil
 }
 
+/**
+ * getUserByEmail 按邮箱查询用户和密码哈希。
+ */
 func (s *Service) getUserByEmail(ctx context.Context, email string) (model.User, string, error) {
 	var (
 		user         model.User
@@ -208,6 +244,9 @@ WHERE email = $1;
 	return user, passwordHash, nil
 }
 
+/**
+ * getUserByID 按用户 ID 查询用户和密码哈希。
+ */
 func (s *Service) getUserByID(ctx context.Context, userID int64) (model.User, string, error) {
 	var (
 		user         model.User
@@ -226,6 +265,9 @@ WHERE id = $1;
 	return user, passwordHash, nil
 }
 
+/**
+ * issueTokenPair 生成访问令牌与刷新令牌，并计算各自剩余有效期。
+ */
 func (s *Service) issueTokenPair(userID int64) (model.AuthToken, error) {
 	now := time.Now()
 	accessExp := now.Add(time.Duration(s.cfg.JWTAccessTTLMinutes) * time.Minute)
@@ -249,6 +291,9 @@ func (s *Service) issueTokenPair(userID int64) (model.AuthToken, error) {
 	}, nil
 }
 
+/**
+ * signToken 根据用户标识和令牌类型签名生成 JWT 字符串。
+ */
 func (s *Service) signToken(userID int64, tokenType string, now, exp time.Time) (string, error) {
 	claims := &CustomClaims{
 		TokenType: tokenType,
@@ -269,8 +314,54 @@ func (s *Service) signToken(userID int64, tokenType string, now, exp time.Time) 
 	return tokenString, nil
 }
 
+/**
+ * newTokenID 生成随机令牌唯一标识。
+ */
 func newTokenID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+/**
+ * isStrongPassword 校验密码是否满足强密码规则：长度不少于 8，且字符类型至少命中两类。
+ */
+func isStrongPassword(password string) bool {
+	if len(password) < 8 {
+		return false
+	}
+
+	var hasUpper bool
+	var hasLower bool
+	var hasDigit bool
+	var hasSpecial bool
+
+	for _, r := range password {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+
+	categoryCount := 0
+	if hasUpper {
+		categoryCount++
+	}
+	if hasLower {
+		categoryCount++
+	}
+	if hasDigit {
+		categoryCount++
+	}
+	if hasSpecial {
+		categoryCount++
+	}
+
+	return categoryCount >= 2
 }
