@@ -7,6 +7,8 @@
 *.out
 *.test
 *.prof
+*.cache
+
 bin/
 vendor/
 go.sum
@@ -17,3 +19,11 @@ go.sum
 *.swo
 # 系统文件
 .DS_Store
+
+# Local runtime/config
+.env
+.run/
+
+# AI prompts
+.ai-workspace
+
